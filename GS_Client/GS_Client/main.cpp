@@ -109,7 +109,7 @@ void do_send(char buf)
 void send_callback(DWORD err, DWORD send_size, LPWSAOVERLAPPED pover, DWORD send_flag)
 {
 	//? 여기서 뭘 해야할까
-	/*wsabuf[0].buf = t_buf;ss
+	/*wsabuf[0].buf = t_buf;
 	wsabuf[0].len = BUFSIZE;
 	recv_flag = 0;
 	ZeroMemory(pover, sizeof(pover));
