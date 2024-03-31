@@ -1,3 +1,4 @@
+#define _CRT_SECURE_NO_WARNINGS
 #include <iostream>
 #include <WS2tcpip.h>
 #include <unordered_map>
@@ -5,22 +6,13 @@
 #include <array>
 #pragma comment (lib, "WS2_32.LIB")
 
+constexpr int BUFSIZE = 256;
 constexpr short PORT = 4000;
 bool b_shutdown = false; // 서버에 연결된 말이 하나도 없을때
 std::unordered_map<LPWSAOVERLAPPED, int> g_session_map;
 std::unordered_map<int, class SESSION> g_players;
 void CALLBACK send_callback(DWORD err, DWORD send_size, LPWSAOVERLAPPED pover, DWORD send_flag);
 void CALLBACK recv_callback(DWORD err, DWORD recv_size, LPWSAOVERLAPPED pover, DWORD recv_flag);
-
-#pragma pack(push, 1)
-struct pts
-{
-	char key{-1};
-	char x{ -1 };
-	char y{ -1 };
-};
-#pragma pack(pop)
-std::array<struct pts, 10> arr;
 
 void print_error(const char* msg, int err_no)
 {
@@ -33,34 +25,51 @@ void print_error(const char* msg, int err_no)
 		LocalFree(msg_buf);
 }
 
+class EXP_OVER {
+public:
+	WSAOVERLAPPED over;
+	WSABUF wsabuf[1];
+	char sendbuf[BUFSIZE]; // 버퍼 사이즈?
+
+	// 이 생성자에서 보낼 데이터 세팅
+	EXP_OVER(int s_id, char* data, int size)
+	{
+		ZeroMemory(&over, sizeof(over));
+		wsabuf[0].buf = sendbuf;
+		wsabuf[0].len = size;
+		memcpy(sendbuf, data, size);
+	}
+
+};
+
 class SESSION {
-	char recv_buf;
 	WSABUF wsabuf[1];
 	SOCKET client_s;
 	WSAOVERLAPPED over;
 	int x{ 0 };
 	int y{ 0 };
-	int key;
+	int session_id;
+	char buf[5];
+	char recvbuf[BUFSIZE];
 
 public:
 	SESSION() { std::cout << "error"; exit(0); };
 	SESSION(SOCKET s, int id) : client_s{ s } 
 	{ 
 		g_session_map[&over] = id; 
-		key = id; 
+		session_id = id;
+		wsabuf[0].buf = recvbuf;
 	}
 	~SESSION() 
 	{ 
 		closesocket(client_s);
-
-		//if (g_players.size() == 0) // 서버 종료 조건
-		//	b_shutdown = true;
 	};
 
 	void recv()
 	{
-		wsabuf[0].buf = &recv_buf;
-		wsabuf[0].len = sizeof(recv_buf);
+		// 굳이 할필요가 없음 버퍼를 공유하지 않아서
+		wsabuf[0].buf = recvbuf;
+		wsabuf[0].len = BUFSIZE;
 		DWORD recv_flag = 0;
 		ZeroMemory(&over, sizeof(over));
 		int res = WSARecv(client_s, wsabuf, 1, nullptr, &recv_flag, &over, recv_callback);
@@ -71,20 +80,13 @@ public:
 		}
 	}
 
-	void send()
+	void send(char* data)
 	{
-		std::string sendData;
-		for (const auto& pt : arr) {
-			sendData.push_back(pt.key);
-			sendData.push_back(pt.x);
-			sendData.push_back(pt.y);
-		}
+		// exp over 생성.
+		auto b = new EXP_OVER(session_id, data, 5);
 
-		std::vector<char> buffer(sendData.begin(), sendData.end());
-		wsabuf[0].buf = buffer.data();
-		wsabuf[0].len = buffer.size();
-
-		int res = WSASend(client_s, wsabuf, 1, nullptr, 0, &over, send_callback);
+		std::cout << sizeof(b);
+		int res = WSASend(client_s, b->wsabuf, 1, nullptr, 0, &b->over, send_callback);
 		if (0 != res) {
 			print_error("WSASend", WSAGetLastError());
 		}
@@ -92,7 +94,7 @@ public:
 
 	void move()
 	{
-		switch (recv_buf)
+		switch (recvbuf[0])
 		{
 		case 'U':
 			if (y > 0) --y;
@@ -107,14 +109,29 @@ public:
 			if (x < 7) ++x;
 			break;
 		case 'E': // 프로그램 종료 조건
-			g_players.erase(key);
+			g_players.erase(session_id);
 			g_session_map.erase(&over);
 			return;
 			break;
 		}
 	}
-	
-	pts GETTTER() { return { static_cast<char>(key), static_cast<char>(x), static_cast<char>(y) }; }
+
+	void broadcast(char* data)
+	{
+		for (auto& p : g_players)
+			p.second.send(data);
+	}
+
+	char* makedata()
+	{
+		ZeroMemory(buf, sizeof(buf));
+		int len = sizeof(buf); // 요기 안좋은 코딩
+		buf[0] = len;
+		buf[1] = char(session_id);
+		buf[2] = char(x);
+		buf[3] = char(y);
+		return buf;
+	}
 };
 
 int main()
@@ -137,7 +154,10 @@ int main()
 	while (!b_shutdown) {
 		SOCKET client_s = WSAAccept(server_s, reinterpret_cast<sockaddr*>(&server_a), &addr_size, nullptr, 0);
 		g_players.try_emplace(id, client_s, id);
-		g_players[id++].send();
+		// 요기만 수정하면 될 듯!
+		g_players[id].broadcast(g_players[id].makedata());
+		g_players[id].recv();
+		id++;
 	}
 	g_players.clear();
 	g_session_map.clear();
@@ -147,33 +167,23 @@ int main()
 
 void send_callback(DWORD err, DWORD send_size, LPWSAOVERLAPPED pover, DWORD send_flag)
 {
-	// recv할준비?
 	if (0 != err){
 		print_error("WSASend", WSAGetLastError());
 	}
-	g_players[g_session_map[pover]].recv();
+	auto b = reinterpret_cast<EXP_OVER*>(pover);
+	delete b;
 }
 
 void recv_callback(DWORD err, DWORD recv_size, LPWSAOVERLAPPED pover, DWORD recv_flag) 
-// recv시에 호출 -> 모든 세션들에게 
 {
-	// 받은 키로 로직 수행
 	int my_id = g_session_map[pover];
 	if (0 != err) {
 		print_error("WSARecv", WSAGetLastError());
 	}
 
+	// 로직 수행
 	g_players[my_id].move();
 
-	// 모든 세션들에게 좌표값을 send하라고 해야 하는데 이걸 어떻게 넘겨줘야 할지...\
-	// 좌표값으로 된 vector 받기. 
-	int cnt = 0;
-	for (auto& pair : g_players)
-	{
-		arr[cnt++] = pair.second.GETTTER();
-	}
-
-	// vector send하라고 하기.
-	for (auto& pair : g_players)
-		pair.second.send();
+	g_players[my_id].broadcast(g_players[my_id].makedata());
+	g_players[my_id].recv();
 }

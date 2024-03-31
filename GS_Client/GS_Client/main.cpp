@@ -30,6 +30,8 @@ WSADATA WSAData; // 전역으로 안빼도 상관x
 WSABUF wsabuf[1];
 WSAOVERLAPPED over;
 HWND hWnd;
+DWORD recv_flag;
+DWORD send_flag;
 
 void CALLBACK send_callback(DWORD err, DWORD send_size, LPWSAOVERLAPPED pover, DWORD send_flag);
 void CALLBACK recv_callback(DWORD err, DWORD recv_size, LPWSAOVERLAPPED pover, DWORD recv_flag);
@@ -82,16 +84,21 @@ void print_error(const char* msg, int err_no)
 		LocalFree(msg_buf);
 }
 
-void recv_n_send(char buf)
+void do_recv()
 {
 	wsabuf[0].buf = t_buf;
 	wsabuf[0].len = BUFSIZE;
-	DWORD recv_flag = 0;
+	recv_flag = 0;
 	ZeroMemory(&over, sizeof(over));
-	int res = WSARecv(server_s, wsabuf, 1, nullptr, &recv_flag, &over, recv_callback);
+	int res = WSARecv(server_s, wsabuf, 1, nullptr, &send_flag, &over, recv_callback);
+	if (0 != res) {
+		int err_no = WSAGetLastError();
+		if (WSA_IO_PENDING != err_no)
+			print_error("WSARecv", WSAGetLastError());
+	}
 }
 
-void send_n_recv(char buf)
+void do_send(char buf)
 {
 	wsabuf[0].buf = &buf;
 	wsabuf[0].len = 1;
@@ -101,30 +108,52 @@ void send_n_recv(char buf)
 
 void send_callback(DWORD err, DWORD send_size, LPWSAOVERLAPPED pover, DWORD send_flag)
 {
-	wsabuf[0].buf = t_buf;
+	//? 여기서 뭘 해야할까
+	/*wsabuf[0].buf = t_buf;
 	wsabuf[0].len = BUFSIZE;
-	DWORD recv_flag = 0;
+	recv_flag = 0;
 	ZeroMemory(pover, sizeof(pover));
 	int res = WSARecv(server_s, wsabuf, 1, nullptr, &recv_flag, pover, recv_callback);
 	if (0 != res) {
 		int err_no = WSAGetLastError();
 		if (WSA_IO_PENDING != err_no)
 			print_error("WSARecv", WSAGetLastError());
-	}
-	
+	}*/
 }
 
 // 여기가 이상한듯...
 void recv_callback(DWORD err, DWORD recv_size, LPWSAOVERLAPPED pover, DWORD recv_flag)
 {
-	for (int i = 0; i < 10; ++i)
+	// recv callback에서 패킷 잘린거 이어받기.
+	// 화면에 그리기.
+	// 다시 리시브 받기.
+
+	// 패킷 구조: 패킷크기, id, x, y.
+	// 패킷을 구분해서 출력하자.
+	int p_size = 0;
+	while (recv_size > p_size) {
+		// 내가처리한 패킷크기보다 받은게 크면 동작
+		int m_size = t_buf[0 + p_size];
+		std::cout << "Player [" << static_cast<int>(t_buf[1 + p_size]) << "]: ";
+		for (DWORD i = 0; i < m_size - 3; ++i)
+			std::cout << int((t_buf[i + p_size + 2])) << " "; // id랑 패킷크기 건너뜀
+		std::cout << std::endl;
+		p_size = p_size + m_size;
+	}
+	
+	// 처리 수정해야 함
+	/*for (int i = 0; i < 10; ++i)
 	{
 		v[i].key = t_buf[3 * i];
 		v[i].x = t_buf[3 * i + 1];
 		v[i].y = t_buf[3 * i + 2];
-	}
+	}*/
+
+	// 그리기.7
 	InvalidateRect(hWnd, NULL, false);
-	UpdateWindow(hWnd);
+
+	// recv 열어두기.
+	do_recv();
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
@@ -158,15 +187,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 		Knight = new Image();
 		Knight->img.Load(TEXT("knight.png"));
 
-		recv_n_send(0);
+		// 먼저 recv 열어두기.
+		do_recv();
 		break;
 
 	case WM_TIMER:
 		if (wParam == 1)
 		{
 			SleepEx(0, TRUE);
-			InvalidateRect(hwnd, NULL, false);
-			UpdateWindow(hwnd);
 		}
 		break;
 
@@ -197,7 +225,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 		default:
 			buf = '0';
 		}
-		send_n_recv(buf);
+		do_send(buf);
 		InvalidateRect(hwnd, NULL, false);
 		break;
 	}
