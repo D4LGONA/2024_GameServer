@@ -12,6 +12,7 @@
 #include <cmath>
 #include <string>
 #include <array>
+#include <unordered_map>
 
 #pragma comment (lib, "WS2_32.LIB") // 옛날옛날시절 라이브러리에서 시작한것.. 그래서 32임
 

@@ -85,34 +85,32 @@ public:
 		// exp over 생성.
 		auto b = new EXP_OVER(session_id, data, 5);
 
-		std::cout << sizeof(b);
 		int res = WSASend(client_s, b->wsabuf, 1, nullptr, 0, &b->over, send_callback);
 		if (0 != res) {
 			print_error("WSASend", WSAGetLastError());
 		}
 	}
 
-	void move()
+	bool move()
 	{
 		switch (recvbuf[0])
 		{
 		case 'U':
 			if (y > 0) --y;
-			break;
+			return true;
 		case 'D':
 			if (y < 7) ++y;
-			break;
+			return true;
 		case 'L':
 			if (x > 0) --x;
-			break;
+			return true;
 		case 'R':
 			if (x < 7) ++x;
-			break;
+			return true;
 		case 'E': // 프로그램 종료 조건
-			g_players.erase(session_id);
-			g_session_map.erase(&over);
-			return;
-			break;
+			x = 9;
+			y = 9;
+			return false;
 		}
 	}
 
@@ -131,6 +129,12 @@ public:
 		buf[2] = char(x);
 		buf[3] = char(y);
 		return buf;
+	}
+
+	void remove_session()
+	{
+		g_players.erase(session_id);
+		g_session_map.erase(&over);
 	}
 };
 
@@ -155,7 +159,10 @@ int main()
 		SOCKET client_s = WSAAccept(server_s, reinterpret_cast<sockaddr*>(&server_a), &addr_size, nullptr, 0);
 		g_players.try_emplace(id, client_s, id);
 		// 요기만 수정하면 될 듯!
-		g_players[id].broadcast(g_players[id].makedata());
+		for (auto& a : g_players)
+		{
+			a.second.broadcast(a.second.makedata());
+		}
 		g_players[id].recv();
 		id++;
 	}
@@ -182,8 +189,14 @@ void recv_callback(DWORD err, DWORD recv_size, LPWSAOVERLAPPED pover, DWORD recv
 	}
 
 	// 로직 수행
-	g_players[my_id].move();
-
-	g_players[my_id].broadcast(g_players[my_id].makedata());
-	g_players[my_id].recv();
+	if (g_players[my_id].move())
+	{
+		g_players[my_id].broadcast(g_players[my_id].makedata());
+		g_players[my_id].recv();
+	}
+	else
+	{
+		g_players[my_id].broadcast(g_players[my_id].makedata());
+		g_players[my_id].remove_session();
+	}
 }

@@ -1,14 +1,7 @@
 #include "stdafx.h"
 
-struct pts
-{
-	char key{-1};
-	char x{ -1 };
-	char y{ -1 };
-};
-
 constexpr short PORT = 4000;
-constexpr int BUFSIZE = 30;
+constexpr int BUFSIZE = 256;
 bool b_shutdown = false; // 서버에 연결된 말이 하나도 없을때
 
 HINSTANCE g_hInst;
@@ -19,9 +12,9 @@ char t_buf[BUFSIZE];
 char buf;
 Image* BackGround = nullptr;
 Image* Knight = nullptr;
-std::array<struct pts, 10> v;
 int kn_x = 0, kn_y = 0;
 int kn_sx = 80, kn_sy = 80; // 말의 x, y 크기
+int my_id{ -1 };
 
 std::string SERVER_ADDR; // 내 컴퓨터를 뜻함 "127.0.0.1"
 SOCKET server_s;
@@ -32,6 +25,7 @@ WSAOVERLAPPED over;
 HWND hWnd;
 DWORD recv_flag;
 DWORD send_flag;
+std::unordered_map<int, POINT> points;
 
 void CALLBACK send_callback(DWORD err, DWORD send_size, LPWSAOVERLAPPED pover, DWORD send_flag);
 void CALLBACK recv_callback(DWORD err, DWORD recv_size, LPWSAOVERLAPPED pover, DWORD recv_flag);
@@ -86,6 +80,7 @@ void print_error(const char* msg, int err_no)
 
 void do_recv()
 {
+	ZeroMemory(t_buf, BUFSIZE);
 	wsabuf[0].buf = t_buf;
 	wsabuf[0].len = BUFSIZE;
 	recv_flag = 0;
@@ -108,48 +103,38 @@ void do_send(char buf)
 
 void send_callback(DWORD err, DWORD send_size, LPWSAOVERLAPPED pover, DWORD send_flag)
 {
-	//? 여기서 뭘 해야할까
-	/*wsabuf[0].buf = t_buf;
-	wsabuf[0].len = BUFSIZE;
-	recv_flag = 0;
-	ZeroMemory(pover, sizeof(pover));
-	int res = WSARecv(server_s, wsabuf, 1, nullptr, &recv_flag, pover, recv_callback);
-	if (0 != res) {
-		int err_no = WSAGetLastError();
-		if (WSA_IO_PENDING != err_no)
-			print_error("WSARecv", WSAGetLastError());
-	}*/
+	
 }
 
-// 여기가 이상한듯...
 void recv_callback(DWORD err, DWORD recv_size, LPWSAOVERLAPPED pover, DWORD recv_flag)
 {
-	// recv callback에서 패킷 잘린거 이어받기.
-	// 화면에 그리기.
-	// 다시 리시브 받기.
-
-	// 패킷 구조: 패킷크기, id, x, y.
-	// 패킷을 구분해서 출력하자.
 	int p_size = 0;
-	while (recv_size > p_size) {
+	while (recv_size > p_size) 
+	{
 		// 내가처리한 패킷크기보다 받은게 크면 동작
 		int m_size = t_buf[0 + p_size];
+		points[t_buf[1 + p_size]] = POINT{ t_buf[2 + p_size],  t_buf[3 + p_size] };
 		std::cout << "Player [" << static_cast<int>(t_buf[1 + p_size]) << "]: ";
-		for (DWORD i = 0; i < m_size - 3; ++i)
-			std::cout << int((t_buf[i + p_size + 2])) << " "; // id랑 패킷크기 건너뜀
+		std::cout << int(t_buf[p_size + 2]) << " ";
+		std::cout << int(t_buf[p_size + 3]) << " ";
 		std::cout << std::endl;
+		if (t_buf[2 + p_size] == 9 and t_buf[3 + p_size] == 9)
+		{
+			points.erase(t_buf[1 + p_size]);
+			if (t_buf[1 + p_size] == my_id)
+				exit(0);
+		}
 		p_size = p_size + m_size;
 	}
-	
-	// 처리 수정해야 함
-	/*for (int i = 0; i < 10; ++i)
-	{
-		v[i].key = t_buf[3 * i];
-		v[i].x = t_buf[3 * i + 1];
-		v[i].y = t_buf[3 * i + 2];
-	}*/
 
-	// 그리기.7
+	if (my_id == -1)
+	{
+		auto last_element = points.end();
+		--last_element;
+		my_id = last_element->first;
+	}
+
+	// 그리기.
 	InvalidateRect(hWnd, NULL, false);
 
 	// recv 열어두기.
@@ -248,10 +233,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 		// // // // // // // // // // // //
 
 		BackGround->img.Draw(mdc, 0, 0, 640, 640);
-		for (pts& p : v)
+		for (auto& p : points)
 		{
-			if(-1 != p.key )
-				Knight->img.TransparentBlt(mdc, p.x * kn_sx, p.y * kn_sy, kn_sx, kn_sy, MAGENTA);
+			Knight->img.TransparentBlt(mdc, p.second.x * kn_sx, p.second.y * kn_sy, kn_sx, kn_sy, MAGENTA);
+			std::wstring str = std::to_wstring(p.first);
+			TextOutW(mdc, p.second.x * kn_sx, p.second.y * kn_sy, str.c_str(), str.size());
 		}
 
 		// // // // // // // // // //
