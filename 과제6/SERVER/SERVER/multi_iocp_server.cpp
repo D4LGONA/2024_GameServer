@@ -7,11 +7,16 @@
 #include <mutex>
 #include <unordered_set>
 #include <queue>
+#include <random>
 #include "protocol.h"
 
 #pragma comment(lib, "WS2_32.lib")
 #pragma comment(lib, "MSWSock.lib")
 using namespace std;
+
+random_device rd;
+mt19937 dre(rd());
+uniform_int_distribution<int>uid{ 0, W_WIDTH }; // 정사각형이니..
 
 constexpr int VIEW_RANGE = 7;
 constexpr int NPC_START = 0;
@@ -268,8 +273,8 @@ void process_packet(int c_id, char* packet)
 	case CS_LOGIN: {
 		CS_LOGIN_PACKET* p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
 		strcpy_s(objects[c_id]._name, p->name);
-		objects[c_id].x = rand() % W_WIDTH;
-		objects[c_id].y = rand() % W_HEIGHT;
+		objects[c_id].x = uid(dre);
+		objects[c_id].y = uid(dre);
 		objects[c_id].send_login_info_packet();
 		{
 			lock_guard<mutex> ll{ objects[c_id]._s_lock };
@@ -456,8 +461,8 @@ void worker_thread(HANDLE h_iocp)
 void initialize_npc()
 {
 	for (int i = 0; i < MAX_NPC; ++i) {
-		objects[i].x = rand() % W_WIDTH;
-		objects[i].y = rand() % W_HEIGHT;
+		objects[i].x = uid(dre);
+		objects[i].y = uid(dre);
 		objects[i]._id = i;
 		sprintf_s(objects[i]._name, "N%d", i);
 		objects[i]._state = ST_INGAME;

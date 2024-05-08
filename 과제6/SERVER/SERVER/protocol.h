@@ -3,10 +3,10 @@ constexpr int BUF_SIZE = 200;
 constexpr int NAME_SIZE = 20;
 
 constexpr int MAX_USER = 5000;
-constexpr int MAX_NPC = 10000;
+constexpr int MAX_NPC = 20'0000;
 
-constexpr int W_WIDTH = 400;
-constexpr int W_HEIGHT = 400;
+constexpr int W_WIDTH = 2000;
+constexpr int W_HEIGHT = 2000;
 
 // Packet ID
 constexpr char CS_LOGIN = 0;
@@ -34,14 +34,14 @@ struct CS_MOVE_PACKET {
 struct SC_LOGIN_INFO_PACKET {
 	unsigned char size;
 	char	type;
-	short	id;
+	int		id;
 	short	x, y;
 };
 
 struct SC_ADD_PLAYER_PACKET {
 	unsigned char size;
 	char	type;
-	short	id;
+	int		id;
 	short	x, y;
 	char	name[NAME_SIZE];
 };
@@ -49,13 +49,13 @@ struct SC_ADD_PLAYER_PACKET {
 struct SC_REMOVE_PLAYER_PACKET {
 	unsigned char size;
 	char	type;
-	short	id;
+	int		id;
 };
 
 struct SC_MOVE_PLAYER_PACKET {
 	unsigned char size;
 	char	type;
-	short	id;
+	int		id;
 	short	x, y;
 	unsigned int move_time;
 };
