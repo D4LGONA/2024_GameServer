@@ -134,6 +134,11 @@ struct EVENT {
 	chrono::system_clock::time_point wakeup_time;
 	EVENT_TYPE e_type;
 	int target_id;
+public:
+	bool operator<(const EVENT& other) const {
+		// 우선순위 큐는 wakeup_time이 더 작은 것이 우선순위가 높도록 설정
+		return wakeup_time > other.wakeup_time;
+	}
 };
 
 priority_queue<EVENT> g_event_queue;
@@ -150,6 +155,30 @@ bool can_see(int a, int b)
 
 	/*if (abs(objects[a].x - objects[b].x) > VIEW_RANGE) return false;
 	return (abs(objects[a].y - objects[b].y) > VIEW_RANGE);*/
+}
+
+void add_timer(int key, EVENT_TYPE ev, int time) // 이딴게.. todo?
+{
+	EVENT evt;
+	evt.e_type = ev;
+	evt.obj_id = key;
+	evt.wakeup_time = chrono::system_clock::now() + chrono::milliseconds(time);
+	switch (ev)
+	{
+	case EV_RANDOM_MOVE:
+		evt.target_id = key;
+		break;
+	case EV_HEAL:
+		break;
+	case EV_ATTACK:
+		break;
+	default:
+		break;
+	}
+
+	eql.lock();
+	g_event_queue.push(evt);
+	eql.unlock();
 }
 
 SOCKET g_s_socket, g_c_socket;
@@ -282,7 +311,8 @@ void process_packet(int c_id, char* packet)
 			if (pl._id == c_id) continue;
 			new_viewlist.insert(pl._id);
 			if (true == is_npc(pl._id) && pl._active == false) {
-				if(true == atomic_compare_exchange_strong (&pl._active, false, true))
+				bool expt = false;
+				if(true == atomic_compare_exchange_strong (&pl._active, &expt, true))
 					add_timer(pl._id, EV_RANDOM_MOVE, 1000);
 			}
 		}
@@ -416,7 +446,6 @@ void worker_thread(HANDLE h_iocp)
 			}
 			else {
 				objects[key]._active = false;
-
 			}
 			delete ex_over;
 			break;
