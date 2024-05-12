@@ -532,16 +532,18 @@ void do_timer(HANDLE h_iocp)
 {
 	using namespace chrono;
 	while (true) {
-		eql.lock();
-		EVENT ev = g_event_queue.top();
-		eql.unlock();
-		if (ev.wakeup_time < system_clock::now()) {
+		if (0 != g_event_queue.size()) {
 			eql.lock();
-			g_event_queue.pop();
+			EVENT ev = g_event_queue.top();
 			eql.unlock();
-			OVER_EXP* ov = new OVER_EXP;
-			ov->_comp_type = OP_RANDOM_MOVE;
-			PostQueuedCompletionStatus(h_iocp, 1, ev.obj_id, &ov->_over);
+			if (ev.wakeup_time < system_clock::now()) {
+				eql.lock();
+				g_event_queue.pop();
+				eql.unlock();
+				OVER_EXP* ov = new OVER_EXP;
+				ov->_comp_type = OP_RANDOM_MOVE;
+				PostQueuedCompletionStatus(h_iocp, 1, ev.obj_id, &ov->_over);
+			}
 		}
 	}
 }
@@ -569,7 +571,7 @@ int main()
 	AcceptEx(g_s_socket, g_c_socket, g_a_over._send_buf, 0, addr_size + 16, addr_size + 16, 0, &g_a_over._over);
 
 	initialize_npc();
-	thread ai_thread{ do_ai_wk, h_iocp }; // ai 스레드 과부하.
+	thread ai_thread{ do_timer, h_iocp }; // ai 스레드 과부하.
 	vector <thread> worker_threads;
 	int num_threads = std::thread::hardware_concurrency();
 	for (int i = 0; i < num_threads; ++i)

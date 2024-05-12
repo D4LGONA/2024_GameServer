@@ -249,7 +249,7 @@ void Worker_Thread() // 패킷 처리하는 스레드
 	}
 }
 
-constexpr int DELAY_LIMIT = 10000;
+constexpr int DELAY_LIMIT = 100;
 constexpr int DELAY_LIMIT2 = 150;
 constexpr int ACCEPT_DELY = 50;
 
