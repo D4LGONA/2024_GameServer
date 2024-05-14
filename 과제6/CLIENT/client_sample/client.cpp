@@ -12,6 +12,7 @@ using namespace std;
 #include "..\..\SERVER\SERVER\protocol.h"
 
 sf::TcpSocket s_socket;
+string s;
 
 constexpr auto SCREEN_WIDTH = 16;
 constexpr auto SCREEN_HEIGHT = 16;
@@ -262,7 +263,9 @@ void send_packet(void *packet)
 int main()
 {
 	wcout.imbue(locale("korean"));
-	sf::Socket::Status status = s_socket.connect("127.0.0.1", PORT_NUM);
+	cout << "ip주소 입력: ";
+	cin >> s;
+	sf::Socket::Status status = s_socket.connect(s.c_str(), PORT_NUM);
 	s_socket.setBlocking(false);
 
 	if (status != sf::Socket::Done) {

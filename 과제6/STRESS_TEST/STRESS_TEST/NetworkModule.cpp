@@ -19,6 +19,8 @@ using namespace std;
 using namespace chrono;
 
 extern HWND		hWnd;
+std::string s;
+
 
 const static int MAX_TEST = 5000; // 최대동접
 constexpr int MAX_CLIENTS = MAX_USER * 2 + MAX_NPC; // 최대세션은 2배
@@ -293,7 +295,7 @@ void Adjust_Number_Of_Client()
 	ZeroMemory(&ServerAddr, sizeof(SOCKADDR_IN));
 	ServerAddr.sin_family = AF_INET;
 	ServerAddr.sin_port = htons(PORT_NUM);
-	ServerAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+	ServerAddr.sin_addr.s_addr = inet_addr(s.c_str());
 
 
 	int Result = WSAConnect(g_clients[num_connections].client_socket, (sockaddr*)&ServerAddr, sizeof(ServerAddr), NULL, NULL, NULL, NULL);
@@ -363,6 +365,9 @@ void Test_Thread() // ai가 돌아가는 스레드
 
 void InitializeNetwork() // 세션 초기화, iocp 서버 운영
 {
+	std::cout << "ip주소 입력: ";
+	std::cin >> s;
+
 	for (auto& cl : g_clients) {
 		cl.connected = false;
 		cl.id = INVALID_ID;
