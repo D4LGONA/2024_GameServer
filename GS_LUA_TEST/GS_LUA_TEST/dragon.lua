@@ -1,6 +1,6 @@
 function plustwo (x)
 local a;
-a = 2
+a = 10
 return x+a;
 end
 --here we see a simple function but it could be very complex,
