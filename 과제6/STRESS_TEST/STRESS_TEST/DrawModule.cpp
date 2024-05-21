@@ -15,6 +15,7 @@
 #include <gl\glu.h>			// Header File For The GLu32 Library
 #include <atomic>
 #include <memory>
+#include <iostream>
 //#include <gl\glaux.h>		// Header File For The Glaux Library
 
 #pragma comment (lib, "opengl32.lib")
@@ -500,5 +501,6 @@ int WINAPI WinMain(HINSTANCE	hInstance,			// Instance
 
 int main()
 {
+	
 	WinMain(0, 0, 0, 0);
 }

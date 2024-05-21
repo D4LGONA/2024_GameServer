@@ -16,11 +16,23 @@ using namespace std;
 
 random_device rd;
 mt19937 dre(rd());
-uniform_int_distribution<int>uid{ 0, W_WIDTH }; // 정사각형이니..
+uniform_int_distribution<int>uid{ 0, W_WIDTH - 1 }; // 정사각형이니..
 
+constexpr int SECTOR_SIZE = 40; // 40 * 40
 constexpr int VIEW_RANGE = 7;
 constexpr int NPC_START = 0;
 constexpr int USER_START = MAX_NPC;
+
+struct BLOCK {
+	short dx;
+	short dy;
+};
+
+const BLOCK Nears[] = {
+	{-1, -1}, {-1, 0}, {-1, 1},
+	{0, -1}, {0, 0}, {0, 1},
+	{1, -1}, {1, 0}, {1, 1}
+};
 
 enum COMP_TYPE { OP_ACCEPT, OP_RECV, OP_SEND, OP_RANDOM_MOVE };
 class OVER_EXP {
@@ -66,6 +78,7 @@ public:
 	chrono::system_clock::time_point _rm_time;
 	unordered_set<int> view_list;
 	mutex _vl_l;
+	short sector_x, sector_y;
 
 	int		_prev_remain;
 	int		_last_move_time;
@@ -149,6 +162,9 @@ public:
 priority_queue<EVENT> g_event_queue;
 mutex eql; // 이벤트큐 락
 
+array<array<unordered_set<int>, W_HEIGHT / SECTOR_SIZE>, W_WIDTH / SECTOR_SIZE> g_ObjectListSector;
+mutex g_SectorLock;
+
 array<SESSION, MAX_NPC + MAX_USER> objects; // 같은 컨테이너에서 위치를 다르게 해서
 //인덱스만으로 모든 npc 검사할수 있게 만들 것
 
@@ -223,10 +239,21 @@ void SESSION::send_add_object_packet(int c_id)
 
 void SESSION::do_random_move()
 {
+	// 플레이어중에 보이는애
 	unordered_set<int> old_vl;
-	for (int i = MAX_NPC; i < MAX_NPC + MAX_USER; ++i) {
-		if (objects[i]._state != ST_INGAME) continue;
-		if (true == can_see(i, _id)) old_vl.insert(i);
+	for (const auto& n : Nears) {
+		short sx = sector_x + n.dx;
+		short sy = sector_y + n.dy;
+		// new viewlist 만들기!
+
+		if (sx >= 0 && sx < W_WIDTH / SECTOR_SIZE && sy >= 0 && sy < W_HEIGHT / SECTOR_SIZE) {
+			lock_guard<mutex> ll{ g_SectorLock };
+			for (auto& i : g_ObjectListSector[sx][sy]) {
+				if (objects[i]._state != ST_INGAME) continue;
+				if (false == can_see(_id, i)) continue;
+				if (false == is_npc(i)) old_vl.insert(i);
+			}
+		}
 	}
 
 	switch (rand() % 4) {
@@ -236,11 +263,36 @@ void SESSION::do_random_move()
 	case 3: if (x < W_HEIGHT - 1) y++; break;
 	}
 
+	if (x / SECTOR_SIZE != sector_x or y / SECTOR_SIZE != sector_y)
+	{
+		lock_guard<mutex> ll{ g_SectorLock }; // sector 이동
+		g_ObjectListSector[sector_x][sector_y].erase(_id);
+		sector_x = x / SECTOR_SIZE;
+		sector_y = y / SECTOR_SIZE;
+		g_ObjectListSector[sector_x][sector_y].insert(_id);
+	}
+
 	unordered_set<int> new_vl;
-	for (int i = MAX_NPC; i < MAX_NPC + MAX_USER; ++i) {
+
+	for (const auto& n : Nears) {
+		short sx = sector_x + n.dx;
+		short sy = sector_y + n.dy;
+		// new viewlist 만들기!
+
+		if (sx >= 0 && sx < W_WIDTH / SECTOR_SIZE && sy >= 0 && sy < W_HEIGHT / SECTOR_SIZE) {
+			lock_guard<mutex> ll{ g_SectorLock };
+			for (auto& i : g_ObjectListSector[sx][sy]) {
+				if (objects[i]._state != ST_INGAME) continue;
+				if (false == can_see(_id, i)) continue;
+				if (false == is_npc(i)) new_vl.insert(i);
+			}
+		}
+	}
+
+	/*for (int i = MAX_NPC; i < MAX_NPC + MAX_USER; ++i) {
 		if (objects[i]._state != ST_INGAME) continue;
 		if (true == can_see(i, _id)) new_vl.insert(i);
-	}
+	}*/
 
 	// 들어온 애
 	for (auto& pl : new_vl) {
@@ -280,6 +332,30 @@ void process_packet(int c_id, char* packet)
 			lock_guard<mutex> ll{ objects[c_id]._s_lock };
 			objects[c_id]._state = ST_INGAME;
 		}
+		{
+			lock_guard<mutex> ll{ g_SectorLock }; // sector에 추가하는 부분
+			objects[c_id].sector_x = objects[c_id].x / SECTOR_SIZE;
+			objects[c_id].sector_y = objects[c_id].y / SECTOR_SIZE;
+			g_ObjectListSector[objects[c_id].sector_x][objects[c_id].sector_y].insert(c_id);
+		}
+		// 들어왔을때 처리
+		for (const auto& n : Nears) {
+			short sx = objects[c_id].sector_x + n.dx;
+			short sy = objects[c_id].sector_y + n.dy;
+
+			if (sx >= 0 && sx < W_WIDTH / SECTOR_SIZE && sy >= 0 && sy < W_HEIGHT / SECTOR_SIZE) {
+				lock_guard<mutex> ll{ g_SectorLock };
+				for (auto& i : g_ObjectListSector[sx][sy]) {
+					if (false == can_see(c_id, i)) continue;
+					if (true == is_npc(i) && objects[i]._active == false) {
+						bool expt = false;
+						if (true == atomic_compare_exchange_strong(&objects[i]._active, &expt, true))
+							add_timer(objects[i]._id, EV_RANDOM_MOVE, 1000);
+					}
+				}
+			}
+		}
+
 		for (auto& pl : objects) {
 			{
 				lock_guard<mutex> ll(pl._s_lock);
@@ -306,11 +382,45 @@ void process_packet(int c_id, char* packet)
 		objects[c_id].x = x;
 		objects[c_id].y = y;
 		
+		if (objects[c_id].x / SECTOR_SIZE != objects[c_id].sector_x or
+			objects[c_id].y / SECTOR_SIZE != objects[c_id].sector_y)
+		{
+			lock_guard<mutex> ll{ g_SectorLock }; // sector 이동
+			g_ObjectListSector[objects[c_id].sector_x][objects[c_id].sector_y].erase(c_id);
+			objects[c_id].sector_x = objects[c_id].x / SECTOR_SIZE;
+			objects[c_id].sector_y = objects[c_id].y / SECTOR_SIZE;
+			g_ObjectListSector[objects[c_id].sector_x][objects[c_id].sector_y].insert(c_id);
+		}
+
 		objects[c_id]._vl_l.lock();
 		unordered_set<int> old_viewlist = objects[c_id].view_list;
 		objects[c_id]._vl_l.unlock();
 		unordered_set<int> new_viewlist;
-		for (auto& pl : objects) {
+
+		// 주변 섹터 탐색(8방향 - 나중에 시야범위 늘렸을때 문제가 될 수 있으니!)
+		for (const auto& n : Nears) {
+			short sx = objects[c_id].sector_x + n.dx;
+			short sy = objects[c_id].sector_y + n.dy;
+
+			// new viewlist 만들기!
+
+			if (sx >= 0 && sx < W_WIDTH / SECTOR_SIZE && sy >= 0 && sy < W_HEIGHT / SECTOR_SIZE) {
+				lock_guard<mutex> ll{ g_SectorLock };
+				for (auto& i : g_ObjectListSector[sx][sy]) {
+					if (objects[i]._state != ST_INGAME) continue;
+					if (false == can_see(c_id, i)) continue;
+					if (i == c_id) continue;
+					new_viewlist.insert(i);
+					if (true == is_npc(i) && objects[i]._active == false) {
+						bool expt = false;
+						if (true == atomic_compare_exchange_strong(&objects[i]._active, &expt, true))
+							add_timer(objects[i]._id, EV_RANDOM_MOVE, 1000);
+					}
+				}
+			}
+		}
+
+		/*for (auto& pl : objects) {
 			if (pl._state != ST_INGAME) continue;
 			if (false == can_see(c_id, pl._id)) continue;
 			if (pl._id == c_id) continue;
@@ -320,7 +430,7 @@ void process_packet(int c_id, char* packet)
 				if(true == atomic_compare_exchange_strong (&pl._active, &expt, true))
 					add_timer(pl._id, EV_RANDOM_MOVE, 1000);
 			}
-		}
+		}*/
 		
 		objects[c_id].send_move_packet(c_id);
 
@@ -360,6 +470,10 @@ void disconnect(int c_id)
 
 	lock_guard<mutex> ll(objects[c_id]._s_lock);
 	objects[c_id]._state = ST_FREE;
+	{
+		lock_guard<mutex> ll(g_SectorLock);
+		g_ObjectListSector[objects[c_id].sector_x][objects[c_id].sector_y].erase(c_id);
+	}
 }
 
 bool player_exist(int npc_id)
@@ -463,6 +577,12 @@ void initialize_npc()
 	for (int i = 0; i < MAX_NPC; ++i) {
 		objects[i].x = uid(dre);
 		objects[i].y = uid(dre);
+		{
+			lock_guard<mutex> ll{ g_SectorLock }; // sector 이동
+			objects[i].sector_x = objects[i].x / SECTOR_SIZE;
+			objects[i].sector_y = objects[i].y / SECTOR_SIZE;
+			g_ObjectListSector[objects[i].sector_x][objects[i].sector_y].insert(i);
+		}
 		objects[i]._id = i;
 		sprintf_s(objects[i]._name, "N%d", i);
 		objects[i]._state = ST_INGAME;
@@ -532,16 +652,18 @@ void do_timer(HANDLE h_iocp)
 {
 	using namespace chrono;
 	while (true) {
-		eql.lock();
-		EVENT ev = g_event_queue.top();
-		eql.unlock();
-		if (ev.wakeup_time < system_clock::now()) {
+		if (0 != g_event_queue.size()) {
 			eql.lock();
-			g_event_queue.pop();
+			EVENT ev = g_event_queue.top();
 			eql.unlock();
-			OVER_EXP* ov = new OVER_EXP;
-			ov->_comp_type = OP_RANDOM_MOVE;
-			PostQueuedCompletionStatus(h_iocp, 1, ev.obj_id, &ov->_over);
+			if (ev.wakeup_time < system_clock::now()) {
+				eql.lock();
+				g_event_queue.pop();
+				eql.unlock();
+				OVER_EXP* ov = new OVER_EXP;
+				ov->_comp_type = OP_RANDOM_MOVE;
+				PostQueuedCompletionStatus(h_iocp, 1, ev.obj_id, &ov->_over);
+			}
 		}
 	}
 }
@@ -569,7 +691,7 @@ int main()
 	AcceptEx(g_s_socket, g_c_socket, g_a_over._send_buf, 0, addr_size + 16, addr_size + 16, 0, &g_a_over._over);
 
 	initialize_npc();
-	thread ai_thread{ do_ai_wk, h_iocp }; // ai 스레드 과부하.
+	thread ai_thread{ do_timer, h_iocp }; // ai 스레드 과부하.
 	vector <thread> worker_threads;
 	int num_threads = std::thread::hardware_concurrency();
 	for (int i = 0; i < num_threads; ++i)
