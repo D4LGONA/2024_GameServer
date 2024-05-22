@@ -578,7 +578,7 @@ void worker_thread(HANDLE h_iocp)
 			for (int j = 0; j < MAX_USER; ++j) { // j는 항상 플레이어
 				if (clients[j]._state != ST_INGAME) continue;
 				if (can_see(static_cast<int>(key), j)) { // todo: 여기도 sector 달아야함
-					add_timer(key, EV_SEND_HELLO, 1000, j);
+					add_timer(key, EV_SEND_HELLO, 0, j);
 					keep_alive = true;
 					break;
 				}
@@ -588,8 +588,8 @@ void worker_thread(HANDLE h_iocp)
 				add_timer(key, EV_RANDOM_MOVE, 1000, ex_over->_ai_target_obj);
 				if (clients[key].ai_move_count != 0) { // bye가 필요한 시점이라면
 					clients[key].ai_move_count += 1;
-					if (clients[key].ai_move_count == 3)
-						add_timer(key, EV_SEND_BYE, 1000, ex_over->_ai_target_obj); // bye 보내기
+					if (clients[key].ai_move_count == 5)
+						add_timer(key, EV_SEND_BYE, 0, ex_over->_ai_target_obj); // bye 보내기
 				}
 			}
 			else {
