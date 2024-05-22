@@ -87,7 +87,7 @@ public:
 	int		last_move_time;
 	lua_State*	_L;
 	mutex	_ll;
-	bool isdoingAI = false;
+	int ai_move_count = 0;
 	short sector_x, sector_y;
 public:
 	SESSION()
@@ -302,20 +302,6 @@ void process_packet(int c_id, char* packet)
 				}
 			}
 		}
-
-		//for (auto& pl : clients) {
-		//	{
-		//		lock_guard<mutex> ll(pl._s_lock);
-		//		if (ST_INGAME != pl._state) continue;
-		//	}
-		//	if (pl._id == c_id) continue;
-		//	if (false == can_see(c_id, pl._id))
-		//		continue;
-		//	if (is_pc(pl._id)) pl.send_add_player_packet(c_id);
-		//	else WakeUpNPC(pl._id, c_id); // 흠...
-		//	clients[c_id].send_add_player_packet(pl._id);
-		//}
-		//break;
 	}
 	case CS_MOVE: {
 		CS_MOVE_PACKET* p = reinterpret_cast<CS_MOVE_PACKET*>(packet);
@@ -363,7 +349,7 @@ void process_packet(int c_id, char* packet)
 					if (true == is_npc(i) && clients[i]._is_active == false) {
 						bool expt = false;
 						if (true == atomic_compare_exchange_strong(&clients[i]._is_active, &expt, true))
-							add_timer(clients[i]._id, EV_RANDOM_MOVE, 1000, c_id); // 여기의 문제인가
+							add_timer(clients[i]._id, EV_RANDOM_MOVE, 1000, c_id); // 새로 추가된 애들에 대해서만 랜덤무브를 실행한다
 					}
 				}
 			}
@@ -391,7 +377,7 @@ void process_packet(int c_id, char* packet)
 					clients[pl].send_add_player_packet(c_id);
 				}
 			}
-			//else add_timer(pl, EV_RANDOM_MOVE, 1000, c_id); // c_id가 pl을 깨운다
+			else add_timer(pl, EV_SEND_HELLO, 1000, c_id); // c_id가 pl을 깨운다
 
 			if (old_vlist.count(pl) == 0)
 				clients[c_id].send_add_player_packet(pl);
@@ -589,16 +575,22 @@ void worker_thread(HANDLE h_iocp)
 			break;
 		case OP_NPC_MOVE: {
 			bool keep_alive = false;
-			for (int j = 0; j < MAX_USER; ++j) {
+			for (int j = 0; j < MAX_USER; ++j) { // j는 항상 플레이어
 				if (clients[j]._state != ST_INGAME) continue;
 				if (can_see(static_cast<int>(key), j)) { // todo: 여기도 sector 달아야함
+					add_timer(key, EV_SEND_HELLO, 1000, j);
 					keep_alive = true;
 					break;
 				}
 			}
-			if (true == keep_alive and false == clients[key].isdoingAI) { // ai를 안쓰는 친구들한테만 랜덤무브 추가
+			if (true == keep_alive) { // 랜덤무브 달아주기
 				do_npc_random_move(static_cast<int>(key));
 				add_timer(key, EV_RANDOM_MOVE, 1000, ex_over->_ai_target_obj);
+				if (clients[key].ai_move_count != 0) { // bye가 필요한 시점이라면
+					clients[key].ai_move_count += 1;
+					if (clients[key].ai_move_count == 3)
+						add_timer(key, EV_SEND_BYE, 1000, ex_over->_ai_target_obj); // bye 보내기
+				}
 			}
 			else {
 				clients[key]._is_active = false;
@@ -607,8 +599,6 @@ void worker_thread(HANDLE h_iocp)
 		}
 			break;
 		case OP_AI_HELLO: { // 이벤트 큐에서 hello를 실행했을 때
-			// hello를 전송하고, 지금/1초뒤/2초뒤에 랜덤무브 이벤트를 이벤트 큐에 추가, 마지막 랜덤무브 이벤트 시에 bye를 추가.
-			clients[key].isdoingAI = true;
 			clients[key]._ll.lock();
 			auto L = clients[key]._L;
 			lua_getglobal(L, "event_player_move");
@@ -616,31 +606,14 @@ void worker_thread(HANDLE h_iocp)
 			lua_pushstring(L, "HELLO");
 			lua_pcall(L, 2, 0, 0);
 			clients[key]._ll.unlock();
-			
-
-			TIMER_EVENT ev{ key, chrono::system_clock::now(), EV_RANDOM_MOVE, ex_over->_ai_target_obj };
-			timer_queue.push(ev);
-			TIMER_EVENT ev2{ key, chrono::system_clock::now() + 1s, EV_RANDOM_MOVE, ex_over->_ai_target_obj };
-			timer_queue.push(ev2);
-			TIMER_EVENT ev3{ key, chrono::system_clock::now() + 2s, EV_RANDOM_MOVE, ex_over->_ai_target_obj };
-			timer_queue.push(ev3);
-			TIMER_EVENT ev4{ key, chrono::system_clock::now() + 2s, EV_SEND_BYE, ex_over->_ai_target_obj };
-			timer_queue.push(ev4);
-
 			delete ex_over;
 		}
 			break;
 
 		case OP_AI_BYE: {
-			clients[key]._ll.lock();
-			auto L = clients[key]._L;
-			lua_getglobal(L, "event_player_move");
-			lua_pushnumber(L, ex_over->_ai_target_obj);
-			lua_pushstring(L, "BYE");
-			lua_pcall(L, 2, 0, 0);
-			clients[key]._ll.unlock();
+			clients[ex_over->_ai_target_obj].send_chat_packet(key, "BYE");
+			clients[key].ai_move_count = 0;
 			delete ex_over;
-			clients[key].isdoingAI = false;
 		}
 			break;
 
@@ -677,6 +650,7 @@ int API_SendMessage(lua_State* L)
 	lua_pop(L, 4);
 
 	clients[user_id].send_chat_packet(my_id, mess);
+	clients[my_id].ai_move_count = 1;
 	return 0;
 }
 
@@ -716,7 +690,6 @@ void InitializeNPC()
 void do_timer()
 {
 	while (true) {
-		cout << "현재 큐의 개수: " << timer_queue.size() << endl;
 		TIMER_EVENT ev;
 		auto current_time = chrono::system_clock::now();
 		if (true == timer_queue.try_pop(ev)) {
@@ -729,6 +702,7 @@ void do_timer()
 			case EV_RANDOM_MOVE: { // 랜덤무브 이벤트
 				OVER_EXP* ov = new OVER_EXP;
 				ov->_comp_type = OP_NPC_MOVE;
+				ov->_ai_target_obj = ev.target_id;
 				PostQueuedCompletionStatus(h_iocp, 1, ev.obj_id, &ov->_over);
 				break;
 			}
