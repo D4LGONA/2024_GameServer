@@ -16,21 +16,9 @@
 #pragma comment(lib, "lua54.lib")
 using namespace std;
 
-constexpr int SECTOR_SIZE = 40; // 40 * 40
 constexpr int VIEW_RANGE = 5;
 
-struct BLOCK {
-	short dx;
-	short dy;
-};
-
-const BLOCK Nears[] = {
-	{-1, -1}, {-1, 0}, {-1, 1},
-	{0, -1}, {0, 0}, {0, 1},
-	{1, -1}, {1, 0}, {1, 1}
-};
-
-enum EVENT_TYPE { EV_SEND_HELLO, EV_RANDOM_MOVE, EV_SEND_BYE};
+enum EVENT_TYPE { EV_RANDOM_MOVE };
 
 struct TIMER_EVENT {
 	int obj_id;
@@ -44,7 +32,7 @@ struct TIMER_EVENT {
 };
 concurrency::concurrent_priority_queue<TIMER_EVENT> timer_queue;
 
-enum COMP_TYPE { OP_ACCEPT, OP_RECV, OP_SEND, OP_NPC_MOVE, OP_AI_HELLO, OP_AI_BYE };
+enum COMP_TYPE { OP_ACCEPT, OP_RECV, OP_SEND, OP_NPC_MOVE, OP_AI_HELLO };
 class OVER_EXP {
 public:
 	WSAOVERLAPPED _over;
@@ -87,8 +75,6 @@ public:
 	int		last_move_time;
 	lua_State*	_L;
 	mutex	_ll;
-	bool isdoingAI = false;
-	short sector_x, sector_y;
 public:
 	SESSION()
 	{
@@ -175,8 +161,6 @@ array<SESSION, MAX_USER + MAX_NPC> clients;
 
 SOCKET g_s_socket, g_c_socket;
 OVER_EXP g_a_over;
-array<array<unordered_set<int>, W_HEIGHT / SECTOR_SIZE>, W_WIDTH / SECTOR_SIZE> g_ObjectListSector;
-mutex g_SectorLock;
 
 bool is_pc(int object_id)
 {
@@ -241,31 +225,20 @@ int get_new_client_id()
 	return -1;
 }
 
-void add_timer(int key, EVENT_TYPE ev, int time, int from)
+void WakeUpNPC(int npc_id, int waker)
 {
-	TIMER_EVENT evt;
-	evt.event_id = ev; // 어떤 이벤트가
-	evt.obj_id = key; // 누구한테
-	evt.wakeup_time = chrono::system_clock::now() + chrono::milliseconds(time); // 얼마뒤에
-	evt.target_id = from; // 누구에 의해
-	
-	timer_queue.push(evt); // 타이머 큐에 넣기
-}
+	OVER_EXP* exover = new OVER_EXP;
+	exover->_comp_type = OP_AI_HELLO;
+	exover->_ai_target_obj = waker;
+	PostQueuedCompletionStatus(h_iocp, 1, npc_id, &exover->_over);
 
-//void WakeUpNPC(int npc_id, int waker) // 새로 시야에 들어온 친구한테 보내는 듯
-//{
-//	OVER_EXP* exover = new OVER_EXP; // 시야에 있으면 hello를 일단 보내고
-//	exover->_comp_type = OP_AI_HELLO;
-//	exover->_ai_target_obj = waker;
-//	PostQueuedCompletionStatus(h_iocp, 1, npc_id, &exover->_over);
-//
-//	if (clients[npc_id]._is_active) return; // 작동중이지 않은 npc이면 리턴
-//	bool old_state = false;
-//	if (false == atomic_compare_exchange_strong(&clients[npc_id]._is_active, &old_state, true))
-//		return; 
-//	TIMER_EVENT ev{ npc_id, chrono::system_clock::now(), EV_RANDOM_MOVE, 0 }; // 아니라면 랜덤무브 동작
-//	timer_queue.push(ev);
-//}
+	if (clients[npc_id]._is_active) return;
+	bool old_state = false;
+	if (false == atomic_compare_exchange_strong(&clients[npc_id]._is_active, &old_state, true))
+		return;
+	TIMER_EVENT ev{ npc_id, chrono::system_clock::now(), EV_RANDOM_MOVE, 0 };
+	timer_queue.push(ev);
+}
 
 void process_packet(int c_id, char* packet)
 {
@@ -280,42 +253,19 @@ void process_packet(int c_id, char* packet)
 			clients[c_id]._state = ST_INGAME;
 		}
 		clients[c_id].send_login_info_packet();
-		{
-			clients[c_id].sector_x = clients[c_id].x / SECTOR_SIZE;
-			clients[c_id].sector_y = clients[c_id].y / SECTOR_SIZE;
-			lock_guard<mutex> ll{ g_SectorLock }; // sector에 추가하는 부분
-			g_ObjectListSector[clients[c_id].sector_x][clients[c_id].sector_y].insert(c_id);
-		}
-		for (const auto& n : Nears) {
-			short sx = clients[c_id].sector_x + n.dx;
-			short sy = clients[c_id].sector_y + n.dy;
-
-			if (sx >= 0 && sx < W_WIDTH / SECTOR_SIZE && sy >= 0 && sy < W_HEIGHT / SECTOR_SIZE) {
-				lock_guard<mutex> ll{ g_SectorLock };
-				for (auto& i : g_ObjectListSector[sx][sy]) {
-					if (false == can_see(c_id, i)) continue;
-					if (true == is_npc(i) && clients[i]._is_active == false) {
-						bool expt = false;
-						if (true == atomic_compare_exchange_strong(&clients[i]._is_active, &expt, true))
-							add_timer(clients[i]._id, EV_RANDOM_MOVE, 1000, c_id); // 로그인 시에 들어가는건 ok 아닌가?
-					}
-				}
+		for (auto& pl : clients) {
+			{
+				lock_guard<mutex> ll(pl._s_lock);
+				if (ST_INGAME != pl._state) continue;
 			}
+			if (pl._id == c_id) continue;
+			if (false == can_see(c_id, pl._id))
+				continue;
+			if (is_pc(pl._id)) pl.send_add_player_packet(c_id);
+			else WakeUpNPC(pl._id, c_id);
+			clients[c_id].send_add_player_packet(pl._id);
 		}
-
-		//for (auto& pl : clients) {
-		//	{
-		//		lock_guard<mutex> ll(pl._s_lock);
-		//		if (ST_INGAME != pl._state) continue;
-		//	}
-		//	if (pl._id == c_id) continue;
-		//	if (false == can_see(c_id, pl._id))
-		//		continue;
-		//	if (is_pc(pl._id)) pl.send_add_player_packet(c_id);
-		//	else WakeUpNPC(pl._id, c_id); // 흠...
-		//	clients[c_id].send_add_player_packet(pl._id);
-		//}
-		//break;
+		break;
 	}
 	case CS_MOVE: {
 		CS_MOVE_PACKET* p = reinterpret_cast<CS_MOVE_PACKET*>(packet);
@@ -331,67 +281,33 @@ void process_packet(int c_id, char* packet)
 		clients[c_id].x = x;
 		clients[c_id].y = y;
 
-		if (clients[c_id].x / SECTOR_SIZE != clients[c_id].sector_x or
-			clients[c_id].y / SECTOR_SIZE != clients[c_id].sector_y)
-		{
-			lock_guard<mutex> ll{ g_SectorLock }; // sector 이동
-			g_ObjectListSector[clients[c_id].sector_x][clients[c_id].sector_y].erase(c_id);
-			clients[c_id].sector_x = clients[c_id].x / SECTOR_SIZE;
-			clients[c_id].sector_y = clients[c_id].y / SECTOR_SIZE;
-			g_ObjectListSector[clients[c_id].sector_x][clients[c_id].sector_y].insert(c_id);
-		}
-
 		unordered_set<int> near_list;
 		clients[c_id]._vl.lock();
 		unordered_set<int> old_vlist = clients[c_id]._view_list;
 		clients[c_id]._vl.unlock();
-
-		// 주변 섹터 탐색(8방향 - 나중에 시야범위 늘렸을때 문제가 될 수 있으니!)
-		for (const auto& n : Nears) {
-			short sx = clients[c_id].sector_x + n.dx;
-			short sy = clients[c_id].sector_y + n.dy;
-
-			// new viewlist 만들기!
-
-			if (sx >= 0 && sx < W_WIDTH / SECTOR_SIZE && sy >= 0 && sy < W_HEIGHT / SECTOR_SIZE) {
-				lock_guard<mutex> ll{ g_SectorLock };
-				for (auto& i : g_ObjectListSector[sx][sy]) {
-					if (clients[i]._state != ST_INGAME) continue;
-					if (false == can_see(c_id, i)) continue;
-					if (i == c_id) continue;
-					near_list.insert(i);
-					if (true == is_npc(i) && clients[i]._is_active == false) {
-						bool expt = false;
-						if (true == atomic_compare_exchange_strong(&clients[i]._is_active, &expt, true))
-							add_timer(clients[i]._id, EV_RANDOM_MOVE, 1000, c_id); // 여기의 문제인가
-					}
-				}
-			}
-		}
-
-		/*for (auto& cl : clients) {
+		for (auto& cl : clients) {
 			if (cl._state != ST_INGAME) continue;
 			if (cl._id == c_id) continue;
 			if (can_see(c_id, cl._id))
 				near_list.insert(cl._id);
-		}*/
+		}
 
 		clients[c_id].send_move_packet(c_id);
 
-		for (auto& pl : near_list) { // 근처에 있는 친구들에 대해
+		for (auto& pl : near_list) {
 			auto& cpl = clients[pl];
-			if (is_pc(pl)) { // 플레이어라면
+			if (is_pc(pl)) {
 				cpl._vl.lock();
-				if (clients[pl]._view_list.count(c_id)) { // 원래 보고있었다면
+				if (clients[pl]._view_list.count(c_id)) {
 					cpl._vl.unlock();
 					clients[pl].send_move_packet(c_id);
 				}
-				else { // 아니라면
+				else {
 					cpl._vl.unlock();
 					clients[pl].send_add_player_packet(c_id);
 				}
 			}
-			//else add_timer(pl, EV_RANDOM_MOVE, 1000, c_id); // c_id가 pl을 깨운다
+			else WakeUpNPC(pl,c_id);
 
 			if (old_vlist.count(pl) == 0)
 				clients[c_id].send_add_player_packet(pl);
@@ -427,29 +343,17 @@ void disconnect(int c_id)
 
 	lock_guard<mutex> ll(clients[c_id]._s_lock);
 	clients[c_id]._state = ST_FREE;
-	{
-		lock_guard<mutex> ll(g_SectorLock);
-		g_ObjectListSector[clients[c_id].sector_x][clients[c_id].sector_y].erase(c_id);
-	}
 }
 
 void do_npc_random_move(int npc_id)
 {
 	SESSION& npc = clients[npc_id];
 	unordered_set<int> old_vl;
-	for (const auto& n : Nears) {
-		short sx = npc.sector_x + n.dx;
-		short sy = npc.sector_y + n.dy;
-		// new viewlist 만들기!
-
-		if (sx >= 0 && sx < W_WIDTH / SECTOR_SIZE && sy >= 0 && sy < W_HEIGHT / SECTOR_SIZE) {
-			lock_guard<mutex> ll{ g_SectorLock };
-			for (auto& i : g_ObjectListSector[sx][sy]) {
-				if (clients[i]._state != ST_INGAME) continue;
-				if (false == can_see(npc._id, i)) continue;
-				if (false == is_npc(i)) old_vl.insert(i);
-			}
-		}
+	for (auto& obj : clients) {
+		if (ST_INGAME != obj._state) continue;
+		if (true == is_npc(obj._id)) continue;
+		if (true == can_see(npc._id, obj._id))
+			old_vl.insert(obj._id);
 	}
 
 	int x = npc.x;
@@ -463,30 +367,12 @@ void do_npc_random_move(int npc_id)
 	npc.x = x;
 	npc.y = y;
 
-	if (x / SECTOR_SIZE != npc.sector_x or y / SECTOR_SIZE != npc.sector_y)
-	{
-		lock_guard<mutex> ll{ g_SectorLock }; // sector 이동
-		g_ObjectListSector[npc.sector_x][npc.sector_y].erase(npc._id);
-		npc.sector_x = x / SECTOR_SIZE;
-		npc.sector_y = y / SECTOR_SIZE;
-		g_ObjectListSector[npc.sector_x][npc.sector_y].insert(npc._id);
-	}
-
 	unordered_set<int> new_vl;
-
-	for (const auto& n : Nears) {
-		short sx = npc.sector_x + n.dx;
-		short sy = npc.sector_y + n.dy;
-		// new viewlist 만들기!
-
-		if (sx >= 0 && sx < W_WIDTH / SECTOR_SIZE && sy >= 0 && sy < W_HEIGHT / SECTOR_SIZE) {
-			lock_guard<mutex> ll{ g_SectorLock };
-			for (auto& i : g_ObjectListSector[sx][sy]) {
-				if (clients[i]._state != ST_INGAME) continue;
-				if (false == can_see(npc._id, i)) continue;
-				if (false == is_npc(i)) new_vl.insert(i);
-			}
-		}
+	for (auto& obj : clients) {
+		if (ST_INGAME != obj._state) continue;
+		if (true == is_npc(obj._id)) continue;
+		if (true == can_see(npc._id, obj._id))
+			new_vl.insert(obj._id);
 	}
 
 	for (auto pl : new_vl) {
@@ -499,7 +385,7 @@ void do_npc_random_move(int npc_id)
 			clients[pl].send_move_packet(npc._id);
 		}
 	}
-	///여기는 대체 뭐지 ?
+	///vvcxxccxvvdsvdvds
 	for (auto pl : old_vl) {
 		if (0 == new_vl.count(pl)) {
 			clients[pl]._vl.lock();
@@ -591,14 +477,15 @@ void worker_thread(HANDLE h_iocp)
 			bool keep_alive = false;
 			for (int j = 0; j < MAX_USER; ++j) {
 				if (clients[j]._state != ST_INGAME) continue;
-				if (can_see(static_cast<int>(key), j)) { // todo: 여기도 sector 달아야함
+				if (can_see(static_cast<int>(key), j)) {
 					keep_alive = true;
 					break;
 				}
 			}
-			if (true == keep_alive and false == clients[key].isdoingAI) { // ai를 안쓰는 친구들한테만 랜덤무브 추가
+			if (true == keep_alive) {
 				do_npc_random_move(static_cast<int>(key));
-				add_timer(key, EV_RANDOM_MOVE, 1000, ex_over->_ai_target_obj);
+				TIMER_EVENT ev{ key, chrono::system_clock::now() + 1s, EV_RANDOM_MOVE, 0 };
+				timer_queue.push(ev);
 			}
 			else {
 				clients[key]._is_active = false;
@@ -606,41 +493,15 @@ void worker_thread(HANDLE h_iocp)
 			delete ex_over;
 		}
 			break;
-		case OP_AI_HELLO: { // 이벤트 큐에서 hello를 실행했을 때
-			// hello를 전송하고, 지금/1초뒤/2초뒤에 랜덤무브 이벤트를 이벤트 큐에 추가, 마지막 랜덤무브 이벤트 시에 bye를 추가.
-			clients[key].isdoingAI = true;
+		case OP_AI_HELLO: {
 			clients[key]._ll.lock();
 			auto L = clients[key]._L;
 			lua_getglobal(L, "event_player_move");
 			lua_pushnumber(L, ex_over->_ai_target_obj);
-			lua_pushstring(L, "HELLO");
-			lua_pcall(L, 2, 0, 0);
-			clients[key]._ll.unlock();
-			
-
-			TIMER_EVENT ev{ key, chrono::system_clock::now(), EV_RANDOM_MOVE, ex_over->_ai_target_obj };
-			timer_queue.push(ev);
-			TIMER_EVENT ev2{ key, chrono::system_clock::now() + 1s, EV_RANDOM_MOVE, ex_over->_ai_target_obj };
-			timer_queue.push(ev2);
-			TIMER_EVENT ev3{ key, chrono::system_clock::now() + 2s, EV_RANDOM_MOVE, ex_over->_ai_target_obj };
-			timer_queue.push(ev3);
-			TIMER_EVENT ev4{ key, chrono::system_clock::now() + 2s, EV_SEND_BYE, ex_over->_ai_target_obj };
-			timer_queue.push(ev4);
-
-			delete ex_over;
-		}
-			break;
-
-		case OP_AI_BYE: {
-			clients[key]._ll.lock();
-			auto L = clients[key]._L;
-			lua_getglobal(L, "event_player_move");
-			lua_pushnumber(L, ex_over->_ai_target_obj);
-			lua_pushstring(L, "BYE");
-			lua_pcall(L, 2, 0, 0);
+			lua_pcall(L, 1, 0, 0);
+			//lua_pop(L, 1);
 			clients[key]._ll.unlock();
 			delete ex_over;
-			clients[key].isdoingAI = false;
 		}
 			break;
 
@@ -686,12 +547,6 @@ void InitializeNPC()
 	for (int i = MAX_USER; i < MAX_USER + MAX_NPC; ++i) {
 		clients[i].x = rand() % W_WIDTH;
 		clients[i].y = rand() % W_HEIGHT;
-		{
-			lock_guard<mutex> ll{ g_SectorLock }; // sector 이동
-			clients[i].sector_x = clients[i].x / SECTOR_SIZE;
-			clients[i].sector_y = clients[i].y / SECTOR_SIZE;
-			g_ObjectListSector[clients[i].sector_x][clients[i].sector_y].insert(i);
-		}
 		clients[i]._id = i;
 		sprintf_s(clients[i]._name, "NPC%d", i);
 		clients[i]._state = ST_INGAME;
@@ -716,39 +571,25 @@ void InitializeNPC()
 void do_timer()
 {
 	while (true) {
-		cout << "현재 큐의 개수: " << timer_queue.size() << endl;
 		TIMER_EVENT ev;
 		auto current_time = chrono::system_clock::now();
 		if (true == timer_queue.try_pop(ev)) {
 			if (ev.wakeup_time > current_time) {
 				timer_queue.push(ev);		// 최적화 필요
 				// timer_queue에 다시 넣지 않고 처리해야 한다.
+				this_thread::sleep_for(1ms);  // 실행시간이 아직 안되었으므로 잠시 대기
 				continue;
 			}
 			switch (ev.event_id) {
-			case EV_RANDOM_MOVE: { // 랜덤무브 이벤트
+			case EV_RANDOM_MOVE:
 				OVER_EXP* ov = new OVER_EXP;
 				ov->_comp_type = OP_NPC_MOVE;
 				PostQueuedCompletionStatus(h_iocp, 1, ev.obj_id, &ov->_over);
 				break;
 			}
-			case EV_SEND_BYE: { // bye 전송
-				OVER_EXP* ov = new OVER_EXP;
-				ov->_comp_type = OP_AI_BYE;
-				ov->_ai_target_obj = ev.target_id;
-				PostQueuedCompletionStatus(h_iocp, 1, ev.obj_id, &ov->_over);
-				break;
-			}
-			case EV_SEND_HELLO: { // hello 전송
-				OVER_EXP* ov = new OVER_EXP;
-				ov->_comp_type = OP_AI_HELLO;
-				ov->_ai_target_obj = ev.target_id;
-				PostQueuedCompletionStatus(h_iocp, 1, ev.obj_id, &ov->_over);
-				break;
-			}
-			}
 			continue;		// 즉시 다음 작업 꺼내기
 		}
+		this_thread::sleep_for(1ms);   // timer_queue가 비어 있으니 잠시 기다렸다가 다시 시작
 	}
 }
 

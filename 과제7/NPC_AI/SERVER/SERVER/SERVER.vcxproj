@@ -141,7 +141,9 @@
     <None Include="npc.lua" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="npc_ai_lua.cpp" />
+    <ClCompile Include="npc_ai_lua.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
+    </ClCompile>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
