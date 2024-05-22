@@ -32,14 +32,14 @@ struct TIMER_EVENT {
 };
 concurrency::concurrent_priority_queue<TIMER_EVENT> timer_queue; // 락 언락보다 빠름.
 
-enum COMP_TYPE { OP_ACCEPT, OP_RECV, OP_SEND, OP_NPC_MOVE, OP_AI_HELLO };
-class OVER_EXP {
+enum COMP_TYPE { OP_ACCEPT, OP_RECV, OP_SEND, OP_NPC_MOVE, OP_PLAYER_MOVE };
+class OVER_EXP { // 얘가 덩치가 커지면 안됨.
 public:
-	WSAOVERLAPPED _over;
+	WSAOVERLAPPED _over; // union을쓰라고? 뭔 말이람.. 이게
 	WSABUF _wsabuf;
 	char _send_buf[BUF_SIZE];
 	COMP_TYPE _comp_type;
-	int _ai_target_obj;
+	int _ai_target_obj; // 누가 이동했는지 알려주기 위함.
 	OVER_EXP()
 	{
 		_wsabuf.len = BUF_SIZE;
@@ -228,9 +228,9 @@ int get_new_client_id()
 void WakeUpNPC(int npc_id, int waker)
 {
 	OVER_EXP* exover = new OVER_EXP;
-	exover->_comp_type = OP_AI_HELLO;
-	exover->_ai_target_obj = waker;
-	PostQueuedCompletionStatus(h_iocp, 1, npc_id, &exover->_over);
+	exover->_comp_type = OP_PLAYER_MOVE;
+	exover->_ai_target_obj = waker; // 깨운 플레이어 id
+	PostQueuedCompletionStatus(h_iocp, 1, npc_id, &exover->_over); // 스크립트로 돌아가는것만 이걸로 돌리자.
 
 	if (clients[npc_id]._is_active) return;
 	bool old_state = false;
@@ -367,7 +367,7 @@ void do_npc_random_move(int npc_id)
 	npc.x = x;
 	npc.y = y;
 
-	unordered_set<int> new_vl;
+	unordered_set<int> new_vl; // 여기 sector 추가하기.
 	for (auto& obj : clients) {
 		if (ST_INGAME != obj._state) continue;
 		if (true == is_npc(obj._id)) continue;
@@ -493,13 +493,12 @@ void worker_thread(HANDLE h_iocp)
 			delete ex_over;
 		}
 			break;
-		case OP_AI_HELLO: {
+		case OP_PLAYER_MOVE: {
 			clients[key]._ll.lock();
 			auto L = clients[key]._L;
 			lua_getglobal(L, "event_player_move");
 			lua_pushnumber(L, ex_over->_ai_target_obj);
 			lua_pcall(L, 1, 0, 0);
-			//lua_pop(L, 1);
 			clients[key]._ll.unlock();
 			delete ex_over;
 		}

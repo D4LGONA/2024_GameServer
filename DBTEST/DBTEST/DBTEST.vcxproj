@@ -19,10 +19,10 @@
     </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <VCProjectVersion>16.0</VCProjectVersion>
+    <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{cdba50eb-0773-44fd-9612-87f4787888e6}</ProjectGuid>
-    <RootNamespace>SERVER</RootNamespace>
+    <ProjectGuid>{ea694cad-c91b-430b-910a-59c178c425e5}</ProjectGuid>
+    <RootNamespace>DBTEST</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -104,7 +104,6 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpplatest</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -128,21 +127,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="npc_ai_lua.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="include\lauxlib.h" />
-    <ClInclude Include="include\lua.h" />
-    <ClInclude Include="include\lua.hpp" />
-    <ClInclude Include="include\luaconf.h" />
-    <ClInclude Include="include\lualib.h" />
-    <ClInclude Include="protocol.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <Library Include="C:\TMP\LUA_TEST\LUA_TEST\lua54.lib" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="npc.lua" />
+    <ClCompile Include="dbtest.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
