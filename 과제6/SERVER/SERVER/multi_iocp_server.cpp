@@ -420,18 +420,6 @@ void process_packet(int c_id, char* packet)
 			}
 		}
 
-		/*for (auto& pl : objects) {
-			if (pl._state != ST_INGAME) continue;
-			if (false == can_see(c_id, pl._id)) continue;
-			if (pl._id == c_id) continue;
-			new_viewlist.insert(pl._id);
-			if (true == is_npc(pl._id) && pl._active == false) {
-				bool expt = false;
-				if(true == atomic_compare_exchange_strong (&pl._active, &expt, true))
-					add_timer(pl._id, EV_RANDOM_MOVE, 1000);
-			}
-		}*/
-		
 		objects[c_id].send_move_packet(c_id);
 
 		for (int p_id : new_viewlist) {
