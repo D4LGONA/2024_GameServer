@@ -80,7 +80,7 @@ int main() {
                     retcode = SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);
 
                     // 어떻게 읽는지 자세히 살펴봅시다
-                    retcode = SQLExecDirect(hstmt, (SQLWCHAR*)L"SELECT user_id, user_name, user_level FROM user_table", SQL_NTS); // 쿼리는 핵심만 간단하게
+                    retcode = SQLExecDirect(hstmt, (SQLWCHAR*)L"SELECT user_id, user_name, user_level FROM user_table WHERE user_id = 1", SQL_NTS); // 쿼리는 핵심만 간단하게
                         
                     // SELECT: 필요한것을 읽는 것. column 이름을 적어서 읽으면 됨. SQLExecDirect 함수로 실행.
                     if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
