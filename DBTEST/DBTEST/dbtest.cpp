@@ -18,8 +18,11 @@ int main() {
     SQLHDBC hdbc;
     SQLHSTMT hstmt = 0;
     SQLRETURN retcode;
-    SQLWCHAR szName[NAME_LEN], szPhone[PHONE_LEN], sCustID[NAME_LEN];
-    SQLLEN cbName = 0, cbCustID = 0, cbPhone = 0;
+    SQLWCHAR szName[NAME_LEN];
+    SQLINTEGER dId;
+    SQLSMALLINT dLevel; // db랑 같은 타입으로 받아라
+    SQLLEN cbName = 0, cbLevel = 0, cbId = 0; // 실제 테이블을 읽었을때 몇칸이냐? 뭔말임이게
+    // DB의 몇자리 들어가 있는가??..
 
     // Allocate environment handle  
     retcode = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &henv);
@@ -43,18 +46,26 @@ int main() {
                 if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
                     retcode = SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);
 
+                    // 어떻게 읽는지 자세히 살펴봅시다
                     retcode = SQLExecDirect(hstmt, (SQLWCHAR*)L"SELECT user_id, user_name, user_level FROM user_table", SQL_NTS); // 쿼리는 핵심만 간단하게
+                    // SELECT: 필요한것을 읽는 것. column 이름을 적어서 읽으면 됨. SQLExecDirect 함수로 실행.
                     if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
 
-                        // Bind columns 1, 2, and 3  
-                        retcode = SQLBindCol(hstmt, 1, SQL_C_WCHAR, &sCustID, 100, &cbCustID);
-                        retcode = SQLBindCol(hstmt, 2, SQL_C_WCHAR, szName, NAME_LEN, &cbName);
-                        retcode = SQLBindCol(hstmt, 3, SQL_C_WCHAR, szPhone, PHONE_LEN, &cbPhone);
+                        // Bind columns 1, 2, and 3 
+                        // 각각의 column 하나하나에 맞는 변수를 지정해주어야 함.
+                        // 숫자를 집어넣음(몇번째 데이터를 연결할 것인지)
+                        // 자료형을 맞춰서 받아야 함.
+                        // 타입 맞춰주는게 중요. 똑같은 크기의 자료형으로 맞춰주는게 까다로움.
+                        retcode = SQLBindCol(hstmt, 1, SQL_C_LONG, &dId, 10, &cbId); // 최대 10자리(10억?)
+                        retcode = SQLBindCol(hstmt, 2, SQL_C_WCHAR, szName, 20, &cbName); // 최대길이 20
+                        retcode = SQLBindCol(hstmt, 3, SQL_C_SHORT, &dLevel, 10, &cbLevel);
 
                         // Fetch and print each row of data. On an error, display a message and exit.  
-                        for (int i = 0; ; i++) {
-                            retcode = SQLFetch(hstmt);
-                            if (retcode == SQL_ERROR || retcode == SQL_SUCCESS_WITH_INFO)
+                        for (int i = 0; ; i++) { // 데이터가 몇개 날라올지 몰라서 무한반복하는듯
+                            retcode = SQLFetch(hstmt); // SQLFetch: 데이터를 하나하나씩 읽는것(SQLExecDirect의 결과를 가져오기)
+                            // odbc에 내장된 버퍼에 읽어옴. 
+                            // fetch의 결과가 error도 success도 아니면 데이터를 다 읽은 것임
+                            if (retcode == SQL_ERROR)
                                 show_error();
                             if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO)
                             {
@@ -63,7 +74,7 @@ int main() {
                                 //warning C4477: 'wprintf' : format string '%S' requires an argument of type 'char *'
                                 //but variadic argument 2 has type 'SQLWCHAR *'
                                 //wprintf(L"%d: %S %S %S\n", i + 1, sCustID, szName, szPhone);  
-                                printf("%d: %ls %ls %ls\n", i + 1, sCustID, szName, szPhone);
+                                wprintf(L"%d: %6d %20s %3d\n", i + 1, dId, szName, dLevel);
                             }
                             else
                                 break;
