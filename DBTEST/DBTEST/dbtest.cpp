@@ -7,8 +7,7 @@
 #define UNICODE  
 #include <sqlext.h>  
 
-#define NAME_LEN 50  
-#define PHONE_LEN 60
+#define NAME_LEN 11 
 
 /************************************************************************
 /* HandleDiagnosticRecord : display error/warning information
@@ -50,10 +49,9 @@ int main() {
     SQLHDBC hdbc;
     SQLHSTMT hstmt = 0;
     SQLRETURN retcode;
-    SQLWCHAR szName[NAME_LEN];
-    SQLINTEGER dId;
-    SQLSMALLINT dLevel; // db랑 같은 타입으로 받아라
-    SQLLEN cbName = 0, cbLevel = 0, cbId = 0; // 실제 테이블을 읽었을때 몇칸이냐? 뭔말임이게
+    SQLVARCHAR szID[NAME_LEN];
+    SQLINTEGER dx, dy; // db랑 같은 타입으로 받아라
+    SQLLEN cbID = 0, cbx = 0, cby = 0; // 실제 테이블을 읽었을때 몇칸이냐? 뭔말임이게
     // DB의 몇자리 들어가 있는가??..
 
     setlocale(LC_ALL, "korean");
@@ -73,14 +71,14 @@ int main() {
                 SQLSetConnectAttr(hdbc, SQL_LOGIN_TIMEOUT, (SQLPOINTER)5, 0);
 
                 // Connect to data source  
-                retcode = SQLConnect(hdbc, (SQLWCHAR*)L"2024_TF", SQL_NTS, (SQLWCHAR*)NULL, 0, NULL, 0);
-
+                // 로그인으로 접속 ???
+                retcode = SQLConnect(hdbc, (SQLWCHAR*)L"hw8_2022184015", SQL_NTS, (SQLWCHAR*)NULL, 0, NULL, 0);
                 // Allocate statement handle  
                 if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
                     retcode = SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);
 
                     // 어떻게 읽는지 자세히 살펴봅시다
-                    retcode = SQLExecDirect(hstmt, (SQLWCHAR*)L"EXEC select_highlevel 10", SQL_NTS); // 쿼리는 핵심만 간단하게
+                    retcode = SQLExecDirect(hstmt, (SQLWCHAR*)L"SELECT * FROM user_table WHERE user_id = 'helloworld';", SQL_NTS); // 쿼리는 핵심만 간단하게
                         
                     // SELECT: 필요한것을 읽는 것. column 이름을 적어서 읽으면 됨. SQLExecDirect 함수로 실행.
                     if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
@@ -90,9 +88,9 @@ int main() {
                         // 숫자를 집어넣음(몇번째 데이터를 연결할 것인지)
                         // 자료형을 맞춰서 받아야 함.
                         // 타입 맞춰주는게 중요. 똑같은 크기의 자료형으로 맞춰주는게 까다로움.
-                        retcode = SQLBindCol(hstmt, 1, SQL_C_LONG, &dId, 10, &cbId); // 최대 10자리(10억?)
-                        retcode = SQLBindCol(hstmt, 2, SQL_C_WCHAR, szName, 20, &cbName); // 최대길이 20
-                        retcode = SQLBindCol(hstmt, 3, SQL_C_SHORT, &dLevel, 10, &cbLevel);
+                        retcode = SQLBindCol(hstmt, 1, SQL_C_CHAR, szID, 11, &cbID);
+                        retcode = SQLBindCol(hstmt, 2, SQL_C_LONG, &dx, 10, &cbx);
+                        retcode = SQLBindCol(hstmt, 3, SQL_C_LONG, &dy, 10, &cby);
 
                         // Fetch and print each row of data. On an error, display a message and exit.  
                         for (int i = 0; ; i++) { // 데이터가 몇개 날라올지 몰라서 무한반복하는듯
@@ -109,7 +107,7 @@ int main() {
                                 //warning C4477: 'wprintf' : format string '%S' requires an argument of type 'char *'
                                 //but variadic argument 2 has type 'SQLWCHAR *'
                                 //wprintf(L"%d: %S %S %S\n", i + 1, sCustID, szName, szPhone);  
-                                wprintf(L"%d: %6d %20s %3d\n", i + 1, dId, szName, dLevel);
+                                printf("%d: %10s %3d %3d\n", i + 1, szID, dx, dy);
                             }
                             else
                                 break;
